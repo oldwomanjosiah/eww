@@ -20,6 +20,32 @@ pub fn clear_files() {
     *FILE_DATABASE.write().unwrap() = FileDatabase::new();
 }
 
+pub fn log_diagnostic(diagnostic: Diagnostic<usize>) {
+    use codespan_reporting::diagnostic::Severity as S;
+
+    let severity = diagnostic.severity;
+
+    let stringified = match stringify_diagnostic(diagnostic) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("{e:?}");
+            return;
+        }
+    };
+
+    match severity {
+        S::Bug | S::Error => {
+            log::error!("{}", stringified);
+        }
+        S::Warning => {
+            log::warn!("{}", stringified);
+        }
+        S::Note | S::Help => {
+            log::info!("{}", stringified);
+        }
+    }
+}
+
 pub fn print_error(err: anyhow::Error) {
     match anyhow_err_to_diagnostic(&err) {
         Some(diag) => match stringify_diagnostic(diag) {

@@ -12,6 +12,7 @@ use nix::{
     sys::signal,
     unistd::{setpgid, Pid},
 };
+use script_var::create_script_var_logged_note;
 use simplexpr::dynval::DynVal;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -53,6 +54,7 @@ pub fn init(evt_send: UnboundedSender<DaemonCommand>) -> ScriptVarHandlerHandle 
                         },
                         else => break,
                     };
+                    Ok::<_, anyhow::Error>(())
                 };
             })
         })
@@ -159,7 +161,15 @@ impl PollVarHandler {
         let evt_send = self.evt_send.clone();
         tokio::spawn(async move {
             let result: Result<_> = try {
-                evt_send.send(app::DaemonCommand::UpdateVars(vec![(var.name.clone(), run_poll_once(&var)?)]))?;
+                let (res, logs) = run_poll_once(&var)?;
+
+                if let Some(logs) = logs {
+                    crate::error_handling_ctx::log_diagnostic(create_script_var_logged_note(var.name_span, &var.name, &logs).0);
+                }
+
+                evt_send.send(app::DaemonCommand::UpdateVars(vec![(var.name.clone(), res)]))?;
+
+                Ok::<_, anyhow::Error>(())
             };
             if let Err(err) = result {
                 crate::error_handling_ctx::print_error(err);
@@ -169,7 +179,16 @@ impl PollVarHandler {
                 _ = cancellation_token.cancelled() => break,
                 _ = tokio::time::sleep(var.interval) => {
                     let result: Result<_> = try {
-                        evt_send.send(app::DaemonCommand::UpdateVars(vec![(var.name.clone(), run_poll_once(&var)?)]))?;
+                        let (res, logs) = run_poll_once(&var)?;
+
+                        if let Some(logs) = logs {
+                            crate::error_handling_ctx::log_diagnostic(
+                                create_script_var_logged_note(var.name_span, &var.name, &logs).0
+                            );
+                        }
+
+                        evt_send.send(app::DaemonCommand::UpdateVars(vec![(var.name.clone(), res)]))?;
+                        Ok::<_, anyhow::Error>(())
                     };
 
                     if let Err(err) = result {
@@ -192,12 +211,12 @@ impl PollVarHandler {
     }
 }
 
-fn run_poll_once(var: &PollScriptVar) -> Result<DynVal> {
+fn run_poll_once(var: &PollScriptVar) -> Result<(DynVal, Option<String>)> {
     match &var.command {
         VarSource::Shell(span, command) => {
             script_var::run_command(command).map_err(|e| anyhow!(create_script_var_failed_warn(*span, &var.name, &e.to_string())))
         }
-        VarSource::Function(x) => x().map_err(|e| anyhow!(e)),
+        VarSource::Function(x) => x().map_err(|e| anyhow!(e)).map(|it| (it, None)),
     }
 }
 
@@ -268,6 +287,8 @@ impl ListenVarHandler {
                 if let Some(completion_notify) = completion_notify {
                     completion_notify.completed().await;
                 }
+
+                Ok::<_, anyhow::Error>(())
             });
         });
     }

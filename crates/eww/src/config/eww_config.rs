@@ -14,7 +14,7 @@ use simplexpr::dynval::DynVal;
 
 use crate::{config::inbuilt, error_handling_ctx, file_database::FileDatabase, paths::EwwPaths, widgets::widget_definitions};
 
-use super::script_var;
+use super::{create_script_var_logged_note, script_var};
 
 /// Load an [`EwwConfig`] from the config dir of the given [`crate::EwwPaths`],
 /// resetting and applying the global YuckFiles object in [`crate::error_handling_ctx`].
@@ -100,7 +100,15 @@ impl EwwConfig {
         let mut vars = self
             .script_vars
             .iter()
-            .map(|(name, var)| Ok((name.clone(), script_var::initial_value(var)?)))
+            .map(|(name, var)| {
+                let (res, diag) = script_var::initial_value(var)?;
+
+                if let Some(diag) = diag {
+                    crate::error_handling_ctx::log_diagnostic(create_script_var_logged_note(var.name_span(), &name, &diag).0);
+                }
+
+                Ok((name.clone(), res))
+            })
             .collect::<Result<HashMap<_, _>>>()?;
         vars.extend(self.initial_variables.clone());
         Ok(vars)
